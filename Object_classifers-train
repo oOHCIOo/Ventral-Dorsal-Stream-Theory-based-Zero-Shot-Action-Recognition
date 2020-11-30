@@ -1,0 +1,131 @@
+import torch
+
+import math
+import torch.nn as nn
+
+import torchvision.datasets as dsets
+import torchvision.transforms as transforms
+from torch.autograd import Variable
+
+BATCH_SIZE = 50
+LEARNING_RATE = 0.0001
+EPOCH = 50
+
+transform = transforms.Compose([
+    transforms.RandomSizedCrop(224),
+    transforms.RandomHorizontalFlip(),
+    transforms.ToTensor(),
+    transforms.Normalize(mean = [ 0.485, 0.456, 0.406 ],
+                         std  = [ 0.229, 0.224, 0.225 ]),
+    ])
+
+trainData = dsets.ImageFolder('./throw_classifiers/throw_classifiers_train', transform)
+testData = dsets.ImageFolder('./throw_classifiers/throw_classifiers_test', transform)
+
+trainLoader = torch.utils.data.DataLoader(dataset=trainData, batch_size=BATCH_SIZE, shuffle=True)
+testLoader = torch.utils.data.DataLoader(dataset=testData, batch_size=BATCH_SIZE, shuffle=False)
+
+class AlexNet(nn.Module):
+    def __init__(self,num_classes=1000):
+        super(AlexNet,self).__init__()
+        self.feature_extraction = nn.Sequential(
+            nn.Conv2d(in_channels=3,out_channels=96,kernel_size=11,stride=4,padding=2,bias=False),
+            nn.BatchNorm2d(96, momentum=1, affine=True),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=3,stride=2,padding=0),
+            nn.Conv2d(in_channels=96,out_channels=192,kernel_size=5,stride=1,padding=2,bias=False),
+            nn.BatchNorm2d(192, momentum=1, affine=True),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=3,stride=2,padding=0),
+            nn.Conv2d(in_channels=192,out_channels=384,kernel_size=3,stride=1,padding=1,bias=False),
+            nn.BatchNorm2d(384, momentum=1, affine=True),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=384,out_channels=256,kernel_size=3,stride=1,padding=1,bias=False),
+            nn.BatchNorm2d(256, momentum=1, affine=True),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=256,out_channels=256,kernel_size=3,stride=1,padding=1,bias=False),
+            nn.BatchNorm2d(256, momentum=1, affine=True),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=0),
+        )
+        self.classifier = nn.Sequential(
+            nn.Dropout(p=0.5),
+            nn.Linear(in_features=256*6*6,out_features=4096),
+            nn.BatchNorm1d(4096),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=0.5),
+            nn.Linear(in_features=4096, out_features=4096),
+            nn.BatchNorm1d(4096),
+            nn.ReLU(inplace=True),
+            nn.Linear(in_features=4096, out_features=2),
+        )
+    def forward(self,x):
+        x = self.feature_extraction(x)
+        x = x.view(x.size(0),256*6*6)
+        x = self.classifier(x)
+        return x
+
+def weights_init(m):
+    classname = m.__class__.__name__
+    if classname.find('Conv') != -1:
+        n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+        m.weight.data.normal_(0, math.sqrt(2. / n))
+        if m.bias is not None:
+            m.bias.data.zero_()
+    elif classname.find('BatchNorm') != -1:
+        m.weight.data.fill_(1)
+        m.bias.data.zero_()
+    elif classname.find('Linear') != -1:
+        n = m.weight.size(1)
+        m.weight.data.normal_(0, 0.01)
+        m.bias.data = torch.zeros(m.bias.data.size())
+      
+Alex = AlexNet()
+Alex.apply(weights_init)
+Alex.cuda()
+
+# Loss and Optimizer
+cost = nn.CrossEntropyLoss()
+optimizer = torch.optim.Adam(Alex.parameters(), lr=LEARNING_RATE)
+
+# Train the model
+for epoch in range(EPOCH):
+    for i, (images, labels) in enumerate(trainLoader):
+    #for images, labels in trainLoader:
+        #print(i)
+        images = Variable(images).cuda()
+        labels = Variable(labels).cuda()
+        #print(images.shape)
+        #print(i)
+
+    # Forward + Backward + Optimize
+        optimizer.zero_grad()
+        outputs = Alex(images)
+        loss = cost(outputs, labels)
+        loss.backward()
+        optimizer.step()
+
+        if ((epoch+1) % 5 == 0) and ((i+1) % 300 ==0):
+            print ('Epoch [%d/%d], Iter[%d] Loss. %.4f' %
+              (epoch+1, EPOCH, i+1, loss.item()))
+            Alex.eval()
+            correct = 0
+            total = 0
+            ac=0
+            for images, labels in testLoader:
+                images = Variable(images).cuda()
+                outputs = Alex(images)
+                _, predicted = torch.max(outputs.data, 1)
+                total += labels.size(0)
+                correct += (predicted.cpu() == labels).sum()
+            
+            print('Test Accuracy of the model on the %d test images: %d %%' % (total,(100 * correct / total)))
+            if (correct / total)>=ac:
+                torch.save(Alex.state_dict(), 'throw.pkl')
+                ac=correct / total
+		 
+
+# Test the model
+
+
+
